@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Watch Jump & Run</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #000; /* OLED schwarz spart Akku */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+            font-family: sans-serif;
+            touch-action: none; /* Verhindert Scrollen und Zoomen auf der Uhr */
+        }
+        
+        /* Container simuliert die 384x384 Auflösung der Pixel Watch 2 */
+        #gameContainer {
+            width: 384px;
+            height: 384px;
+            position: relative;
+            border-radius: 50%; /* Optische Hilfe im Desktop-Browser */
+            overflow: hidden;
+            background-color: #000;
+        }
+        
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="384" height="384"></canvas>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Spiel-Status Variablen
+        let frames = 0;
+        let score = 0;
+        let gameOver = false;
+        let gameSpeed = 3;
+
+        // Anpassung an das runde Display
+        // Der Boden ist etwas höher, damit er nicht im runden Rand verschwindet
+        const groundY = 280; 
+
+        // Spieler-Objekt
+        const player = {
+            x: 80,
+            y: groundY - 30,
+            width: 30,
+            height: 30,
+            dy: 0,
+            jumpForce: 10.5,
+            gravity: 0.6,
+            grounded: true,
+            
+            draw() {
+                ctx.fillStyle = '#00E5FF'; // Helles Cyan für perfekten OLED-Kontrast
+                ctx.beginPath();
+                ctx.roundRect(this.x, this.y, this.width, this.height, 5);
+                ctx.fill();
+            },
+            
+            jump() {
+                if (this.grounded) {
+                    this.dy = -this.jumpForce;
+                    this.grounded = false;
+                }
+            },
+            
+            update() {
+                this.y += this.dy;
+                
+                // Schwerkraft anwenden
+                if (this.y + this.height < groundY) {
+                    this.dy += this.gravity;
+                    this.grounded = false;
+                } else {
+                    this.dy = 0;
+                    this.grounded = true;
+                    this.y = groundY - this.height;
+                }
+                this.draw();
+            }
+        };
+
+        const obstacles = [];
+
+        function handleObstacles() {
+            // Alle 100 Frames ein neues Hindernis spawnen
+            if (frames % 100 === 0) {
+                obstacles.push({
+                    x: canvas.width,
+                    y: groundY - 30,
+                    width: 25,
+                    height: 30
+                });
+            }
+
+            for (let i = 0; i < obstacles.length; i++) {
+                let obs = obstacles[i];
+                obs.x -= gameSpeed;
+
+                ctx.fillStyle = '#FF1744'; // Helles Rot als Warnfarbe
+                ctx.beginPath();
+                ctx.roundRect(obs.x, obs.y, obs.width, obs.height, 5);
+                ctx.fill();
+
+                // Simple Box-Kollisionserkennung
+                if (
+                    player.x < obs.x + obs.width &&
+                    player.x + player.width > obs.x &&
+                    player.y < obs.y + obs.height &&
+                    player.y + player.height > obs.y
+                ) {
+                    gameOver = true;
+                }
+
+                // Wenn Hindernis den Bildschirm verlässt
+                if (obs.x + obs.width < 0) {
+                    obstacles.splice(i, 1);
+                    score++;
+                    
+                    // Spiel wird alle 5 Punkte minimal schneller
+                    if (score % 5 === 0) {
+                        gameSpeed += 0.4;
+                    }
+                    i--;
+                }
+            }
+        }
+
+        function drawGround() {
+            ctx.strokeStyle = '#333';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(0, groundY);
+            ctx.lineTo(canvas.width, groundY);
+            ctx.stroke();
+        }
+
+        function drawUI() {
+            ctx.fillStyle = '#FFF';
+            ctx.font = 'bold 24px sans-serif';
+            ctx.textAlign = 'center';
+            // Score im oberen, sicheren Bereich platzieren
+            ctx.fillText(score, canvas.width / 2, 70);
+
+            if (gameOver) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = '#FF1744';
+                ctx.font = 'bold 32px sans-serif';
+                ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - 10);
+                
+                ctx.fillStyle = '#FFF';
+                ctx.font = '16px sans-serif';
+                ctx.fillText('Tippe zum Neustarten', canvas.width / 2, canvas.height / 2 + 30);
+            }
+        }
+
+        function resetGame() {
+            player.y = groundY - player.height;
+            player.dy = 0;
+            obstacles.length = 0;
+            score = 0;
+            frames = 0;
+            gameSpeed = 3;
+            gameOver = false;
+            animate();
+        }
+
+        function animate() {
+            // Screen leeren
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawGround();
+            
+            if (!gameOver) {
+                player.update();
+                handleObstacles();
+                drawUI();
+                frames++;
+                requestAnimationFrame(animate);
+            } else {
+                drawUI();
+            }
+        }
+
+        // Universal-Input für die Watch (egal ob Tap oder Maus im Emulator)
+        window.addEventListener('pointerdown', (e) => {
+            e.preventDefault(); 
+            if (gameOver) {
+                resetGame();
+            } else {
+                player.jump();
+            }
+        });
+
+        // Start
+        animate();
+    </script>
+</body>
+</html>
