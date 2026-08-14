@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Watch Jump & Run Pro - Mit Gesichtern</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            touch-action: none;
+        }
+        
+        #gameContainer {
+            width: 384px;
+            height: 384px;
+            position: relative;
+            border-radius: 50%;
+            overflow: hidden;
+            background-color: #000;
+            box-shadow: inset 0 0 40px rgba(0, 229, 255, 0.05);
+        }
+        
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="384" height="384"></canvas>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Spiel-Status Variablen
+        let state = 'START'; // START, PLAYING, GAMEOVER
+        let frames = 0;
+        let score = 0;
+        let highScore = localStorage.getItem('watchJumpHighScore') || 0;
+        let gameSpeed = 3.5;
+
+        const groundY = 280; 
+
+        // Partikelsystem
+        let particles = [];
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.size = Math.random() * 3 + 1;
+                this.speedX = Math.random() * 4 - 2;
+                this.speedY = Math.random() * -4 - 1;
+                this.color = color;
+                this.life = 1.0;
+            }
+            update() {
+                this.x += this.speedX;
+                this.y += this.speedY;
+                this.life -= 0.05;
+            }
+            draw() {
+                ctx.globalAlpha = Math.max(0, this.life);
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.globalAlpha = 1.0;
+            }
+        }
+
+        function createParticles(x, y, color, count) {
+            for (let i = 0; i < count; i++) {
+                particles.push(new Particle(x, y, color));
+            }
+        }
+
+        // Spieler-Objekt mit Gesicht und Trail
+        const player = {
+            x: 80,
+            y: groundY - 30,
+            width: 30,
+            height: 30,
+            dy: 0,
+            jumpForce: 11.5,
+            gravity: 0.7,
+            grounded: true,
+            history: [], 
+            
+            draw() {
+                // Trail
+                this.history.forEach((pos, index) => {
+                    const alpha = (index + 1) / this.history.length;
+                    ctx.fillStyle = `rgba(0, 229, 255, ${alpha * 0.3})`;
+                    ctx.beginPath();
+                    ctx.roundRect(pos.x, pos.y, this.width, this.height, 5);
+                    ctx.fill();
+                });
+
+                // Spieler (Neon Cyan Block)
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = '#00E5FF';
+                ctx.fillStyle = '#00E5FF';
+                ctx.beginPath();
+                ctx.roundRect(this.x, this.y, this.width, this.height, 5);
+                ctx.fill();
+                
+                // --- NEU: Spieler-Gesicht (freundlich) ---
+                // Weisse Züge für Kontrast
+                ctx.shadowBlur = 5;
+                ctx.shadowColor = '#FFF';
+                ctx.fillStyle = '#FFF'; 
+                
+                // Augen
+                const eyeY = this.y + this.height * 0.4;
+                const eyeLeftX = this.x + this.width * 0.3;
+                const eyeRightX = this.x + this.width * 0.7;
+                const eyeWidth = 3;
+                const eyeHeight = 5;
+                ctx.fillRect(eyeLeftX - eyeWidth/2, eyeY - eyeHeight/2, eyeWidth, eyeHeight);
+                ctx.fillRect(eyeRightX - eyeWidth/2, eyeY - eyeHeight/2, eyeWidth, eyeHeight);
+
+                // Mund (kleines Lächeln als Linie)
+                ctx.strokeStyle = '#FFF';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(this.x + this.width * 0.35, this.y + this.height * 0.7);
+                ctx.lineTo(this.x + this.width * 0.65, this.y + this.height * 0.7);
+                ctx.stroke();
+                
+                ctx.shadowBlur = 0; 
+            },
+            
+            jump() {
+                if (this.grounded) {
+                    this.dy = -this.jumpForce;
+                    this.grounded = false;
+                    createParticles(this.x + this.width/2, this.y + this.height, '#00E5FF', 8);
+                }
+            },
+            
+            update() {
+                this.history.push({x: this.x, y: this.y});
+                if (this.history.length > 5) this.history.shift();
+
+                this.y += this.dy;
+                
+                if (this.y + this.height < groundY) {
+                    this.dy += this.gravity;
+                    this.grounded = false;
+                } else {
+                    if (!this.grounded) {
+                        createParticles(this.x + this.width/2, groundY, '#FFF', 5);
+                    }
+                    this.dy = 0;
+                    this.grounded = true;
+                    this.y = groundY - this.height;
+                }
+                this.draw();
+            }
+        };
+
+        const obstacles = [];
+
+        function handleObstacles() {
+            const spawnRate = Math.max(60, 120 - Math.floor(gameSpeed * 10));
+            
+            if (frames % spawnRate === 0) {
+                const height = Math.random() > 0.5 ? 30 : 45;
+                obstacles.push({
+                    x: canvas.width,
+                    y: groundY - height,
+                    width: 25,
+                    height: height
+                });
+            }
+
+            for (let i = 0; i < obstacles.length; i++) {
+                let obs = obstacles[i];
+                obs.x -= gameSpeed;
+
+                // Hindernis zeichnen (Neon Rot/Pink)
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = '#FF1744';
+                ctx.fillStyle = '#FF1744';
+                ctx.beginPath();
+                ctx.roundRect(obs.x, obs.y, obs.width, obs.height, [5, 5, 0, 0]);
+                ctx.fill();
+                
+                // --- NEU: Hindernis-Gesicht (wütend/böse) ---
+                const obsMidX = obs.x + obs.width / 2;
+                const eyeY = obs.y + obs.height * 0.35;
+                const eyeWidth = 4;
+                const eyeHeight = 6;
+                
+                // Weisse Züge für Kontrast
+                ctx.shadowBlur = 5;
+                ctx.shadowColor = '#FFF';
+                ctx.fillStyle = '#FFF'; 
+                
+                // Linkes Auge
+                ctx.fillRect(obsMidX - obs.width * 0.25 - eyeWidth/2, eyeY - eyeHeight/2, eyeWidth, eyeHeight);
+                // Rechtes Auge
+                ctx.fillRect(obsMidX + obs.width * 0.25 - eyeWidth/2, eyeY - eyeHeight/2, eyeWidth, eyeHeight);
+                
+                // Wütende Augenbrauen (schräge Weisse Linien darüber)
+                ctx.strokeStyle = '#FFF';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                // Linke Augenbraue
+                ctx.moveTo(obsMidX - obs.width * 0.4, eyeY - eyeHeight/2 - 2);
+                ctx.lineTo(obsMidX - obs.width * 0.1, eyeY - eyeHeight/2 + 2);
+                // Rechte Augenbraue
+                ctx.moveTo(obsMidX + obs.width * 0.1, eyeY - eyeHeight/2 + 2);
+                ctx.lineTo(obsMidX + obs.width * 0.4, eyeY - eyeHeight/2 - 2);
+                ctx.stroke();
+
+                // Mund (wütende Zickzack-Linie)
+                const mouthY = obs.y + obs.height * 0.7;
+                ctx.beginPath();
+                ctx.moveTo(obsMidX - obs.width * 0.3, mouthY);
+                ctx.lineTo(obsMidX - obs.width * 0.1, mouthY - 3);
+                ctx.lineTo(obsMidX + obs.width * 0.1, mouthY + 3);
+                ctx.lineTo(obsMidX + obs.width * 0.3, mouthY);
+                ctx.stroke();
+                // --- Ende NEU ---
+                
+                ctx.shadowBlur = 0; 
+
+                // Kollisionserkennung
+                const hitboxPadding = 4;
+                if (
+                    player.x + hitboxPadding < obs.x + obs.width - hitboxPadding &&
+                    player.x + player.width - hitboxPadding > obs.x + hitboxPadding &&
+                    player.y + hitboxPadding < obs.y + obs.height - hitboxPadding &&
+                    player.y + player.height - hitboxPadding > obs.y + hitboxPadding
+                ) {
+                    endGame();
+                }
+
+                // Hindernis aus Liste entfernen, wenn es links raus ist
+                if (obs.x + obs.width < 0) {
+                    obstacles.splice(i, 1);
+                    score++;
+                    
+                    if (score > highScore) {
+                        highScore = score;
+                        localStorage.setItem('watchJumpHighScore', highScore);
+                    }
+                    
+                    if (score % 5 === 0) {
+                        gameSpeed += 0.3;
+                    }
+                    i--;
+                }
+            }
+        }
+
+        function drawGround() {
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = '#00E5FF';
+            ctx.strokeStyle = 'rgba(0, 229, 255, 0.5)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(0, groundY);
+            ctx.lineTo(canvas.width, groundY);
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+            
+            ctx.fillStyle = 'rgba(0, 229, 255, 0.05)';
+            ctx.fillRect(0, groundY, canvas.width, canvas.height - groundY);
+        }
+
+        function drawUI() {
+            ctx.fillStyle = '#FFF';
+            ctx.textAlign = 'center';
+            
+            if (state === 'START') {
+                ctx.font = 'bold 28px sans-serif';
+                ctx.fillText('NEON JUMP', canvas.width / 2, canvas.height / 2 - 20);
+                ctx.font = '16px sans-serif';
+                ctx.fillStyle = '#AAA';
+                ctx.fillText('Tippe zum Starten', canvas.width / 2, canvas.height / 2 + 20);
+                
+                ctx.font = '14px sans-serif';
+                ctx.fillStyle = '#00E5FF';
+                ctx.fillText(`Highscore: ${highScore}`, canvas.width / 2, canvas.height / 2 + 60);
+                return;
+            }
+
+            // In-Game Score
+            ctx.font = 'bold 36px sans-serif';
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+            ctx.fillText(score, canvas.width / 2, 80);
+
+            // --- Game Over Bildschirm ---
+            if (state === 'GAMEOVER') {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                // Game Over Text (Neon Rot)
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = '#FF1744';
+                ctx.fillStyle = '#FF1744';
+                ctx.font = 'bold 32px sans-serif';
+                ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - 20);
+                ctx.shadowBlur = 0;
+                
+                ctx.fillStyle = '#FFF';
+                ctx.font = '18px sans-serif';
+                ctx.fillText(`Score: ${score} | High: ${highScore}`, canvas.width / 2, canvas.height / 2 + 20);
+                
+                ctx.fillStyle = '#AAA';
+                ctx.font = '14px sans-serif';
+                ctx.fillText('Tippe für Neustart', canvas.width / 2, canvas.height / 2 + 60);
+            }
+        }
+
+        function endGame() {
+            state = 'GAMEOVER';
+            createParticles(player.x + player.width/2, player.y + player.height/2, '#00E5FF', 20);
+        }
+
+        function resetGame() {
+            player.y = groundY - player.height;
+            player.dy = 0;
+            player.history = [];
+            obstacles.length = 0;
+            particles.length = 0;
+            score = 0;
+            frames = 0;
+            gameSpeed = 3.5;
+            state = 'PLAYING';
+        }
+
+        function animate() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            drawGround();
+
+            if (state === 'PLAYING') {
+                player.update();
+                handleObstacles();
+                frames++;
+            } else if (state === 'GAMEOVER') {
+                particles.forEach(p => p.update());
+            } else if (state === 'START') {
+                player.draw();
+            }
+
+            // Partikel rendern
+            for (let i = 0; i < particles.length; i++) {
+                particles[i].draw();
+                if (state === 'PLAYING') particles[i].update();
+                if (particles[i].life <= 0) {
+                    particles.splice(i, 1);
+                    i--;
+                }
+            }
+            
+            drawUI();
+            requestAnimationFrame(animate);
+        }
+
+        // Universal-Input
+        window.addEventListener('pointerdown', (e) => {
+            e.preventDefault(); 
+            if (state === 'START' || state === 'GAMEOVER') {
+                resetGame();
+            } else if (state === 'PLAYING') {
+                player.jump();
+            }
+        });
+
+        // Start
+        animate();
+    </script>
+</body>
+</html>
