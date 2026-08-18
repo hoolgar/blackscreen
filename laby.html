@@ -28,7 +28,7 @@
                 0 0 0 2px #000, 
                 0 15px 25px rgba(0,0,0,0.7), 
                 inset 0 0 10px rgba(0,0,0,0.5);
-            background-color: #111;
+            background-color: #000;
             overflow: hidden;
         }
         canvas {
@@ -276,16 +276,13 @@
         }
 
         function draw() {
-            // Hintergrund (Modernes dunkles Design)
-            let bgGrad = ctx.createRadialGradient(CENTER, CENTER, 0, CENTER, CENTER, SIZE/2);
-            bgGrad.addColorStop(0, '#1a1a2e');
-            bgGrad.addColorStop(1, '#0f0f13');
-            ctx.fillStyle = bgGrad;
+            // Hintergrund (Tiefschwarz)
+            ctx.fillStyle = '#000000';
             ctx.beginPath();
             ctx.arc(CENTER, CENTER, SIZE/2, 0, Math.PI * 2);
             ctx.fill();
             
-            // Dezente Tech-Ringe (statt Holzmaserung)
+            // Dezente Tech-Ringe
             ctx.lineWidth = 1;
             ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
             for(let i = 20; i < GAME_RADIUS; i+=20) { // Größerer Abstand für cleaneren Look
