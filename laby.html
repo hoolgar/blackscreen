@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Sensor-Labyrinth (Pixel Watch 2 Prototype)</title>
+    <style>
+        body {
+            background-color: #121212;
+            color: #eee;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+            touch-action: none; /* Prevents scrolling on mobile touch */
+        }
+        #watch-bezel {
+            position: relative;
+            width: 360px;
+            height: 360px;
+            border-radius: 50%;
+            border: 14px solid #2a2a2a;
+            box-shadow: 
+                0 0 0 2px #000, 
+                0 15px 25px rgba(0,0,0,0.7), 
+                inset 0 0 10px rgba(0,0,0,0.5);
+            background-color: #111;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+        }
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.6);
+            border-radius: 50%;
+            z-index: 10;
+            cursor: pointer;
+            transition: opacity 0.3s;
+        }
+        #message {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #fff;
+            text-align: center;
+            margin-bottom: 5px;
+            text-shadow: 1px 1px 4px #000;
+        }
+        #sub-message {
+            font-size: 0.8em;
+            color: #bbb;
+            text-align: center;
+            max-width: 80%;
+            line-height: 1.3;
+        }
+        .instruction {
+            margin-top: 30px;
+            color: #888;
+            font-size: 0.85em;
+            text-align: center;
+            max-width: 400px;
+            line-height: 1.5;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="watch-bezel">
+        <canvas id="gameCanvas" width="360" height="360"></canvas>
+        <div id="ui-layer">
+            <div id="message">SENSOR LABYRINTH</div>
+            <div id="sub-message">Tippen zum Starten<br><br>(Ziel: Ins Zentrum)</div>
+        </div>
+    </div>
+
+    <div class="instruction">
+        <strong>Steuerung:</strong><br>
+        <strong>Smartphone:</strong> Gerät neigen.<br>
+        <strong>Desktop:</strong> Mauszeiger auf der Uhr bewegen (simuliert die Neigung).
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const uiLayer = document.getElementById('ui-layer');
+        const msgEl = document.getElementById('message');
+        const subMsgEl = document.getElementById('sub-message');
+
+        const SIZE = 360;
+        const CENTER = SIZE / 2;
+        const GAME_RADIUS = CENTER - 5;
+
+        // Spielstatus
+        let gameState = 'START'; // START, PLAYING, WON, LOST
+        let animationId;
+
+        // Ball Physik
+        let ball = {
+            x: CENTER,
+            y: SIZE - 30, // Start unten
+            vx: 0,
+            vy: 0,
+            radius: 8,
+            color: '#e0e0e0'
+        };
+
+        // Neigung (Input)
+        let tilt = { x: 0, y: 0 };
+        const MAX_TILT = 30; // Maximale Neigungskraft
+
+        // Level Design: Konzentrische Wände mit Lücken und Löchern
+        const walls = [
+            { radius: 120, thickness: 8, gapStart: Math.PI * 1.2, gapEnd: Math.PI * 1.5 }, // Außen
+            { radius: 80,  thickness: 8, gapStart: Math.PI * 0.1, gapEnd: Math.PI * 0.4 }, // Mitte
+            { radius: 40,  thickness: 8, gapStart: Math.PI * 0.7, gapEnd: Math.PI * 1.1 }  // Innen
+        ];
+
+        const holes = [
+            { x: CENTER - 60, y: CENTER - 90, radius: 12 },
+            { x: CENTER + 90, y: CENTER + 30, radius: 14 },
+            { x: CENTER - 20, y: CENTER + 65, radius: 10 }
+        ];
+
+        const goal = {
+            x: CENTER,
+            y: CENTER,
+            radius: 18
+        };
+
+        
+        // Desktop Fallback: Mausbewegung über dem Canvas
+        canvas.addEventListener('mousemove', (e) => {
+            if (gameState !== 'PLAYING') return;
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            // Berechne Distanz vom Zentrum als simulierten Neigungswinkel
+            let dx = mouseX - CENTER;
+            let dy = mouseY - CENTER;
+            
+            // Limitieren des simulierten Inputs
+            tilt.x = Math.max(-MAX_TILT, Math.min(MAX_TILT, dx / 3));
+            tilt.y = Math.max(-MAX_TILT, Math.min(MAX_TILT, dy / 3));
+        });
+
+        canvas.addEventListener('mouseleave', () => {
+            if (gameState === 'PLAYING') {
+                tilt.x = 0; tilt.y = 0; // Stoppen, wenn Maus verlässt
+            }
+        });
+
+        // Mobile Device Orientation (Echte Neigung)
+        window.addEventListener('deviceorientation', (e) => {
+            if (gameState !== 'PLAYING' || !e.beta || !e.gamma) return;
+            // beta: front to back (-180 to 180)
+            // gamma: left to right (-90 to 90)
+            tilt.y = Math.max(-MAX_TILT, Math.min(MAX_TILT, e.beta));
+            tilt.x = Math.max(-MAX_TILT, Math.min(MAX_TILT, e.gamma));
+        });
+
+        // UI Clicks für Start/Restart
+        uiLayer.addEventListener('click', () => {
+            if (gameState === 'START' || gameState === 'WON' || gameState === 'LOST') {
+                startGame();
+            }
+        });
+
+        function startGame() {
+            // Reset Ball
+            ball.x = CENTER;
+            ball.y = SIZE - 30;
+            ball.vx = 0;
+            ball.vy = 0;
+            tilt.x = 0;
+            tilt.y = 0;
+
+            gameState = 'PLAYING';
+            uiLayer.style.opacity = '0';
+            setTimeout(() => uiLayer.style.pointerEvents = 'none', 300);
+
+            if (animationId) cancelAnimationFrame(animationId);
+            gameLoop();
+        }
+
+        function endGame(won) {
+            gameState = won ? 'WON' : 'LOST';
+            uiLayer.style.pointerEvents = 'auto';
+            uiLayer.style.opacity = '1';
+            
+            msgEl.innerText = won ? "GESCHAFFT!" : "EINGEFALLEN!";
+            msgEl.style.color = won ? "#4ade80" : "#f87171";
+            subMsgEl.innerText = "Tippen für Neustart";
+        }
+
+        function update() {
+            // 1. Physik anwenden (Beschleunigung + Reibung)
+            const speedMult = 0.015; 
+            const friction = 0.94; // Holzreibung
+            
+            ball.vx += tilt.x * speedMult;
+            ball.vy += tilt.y * speedMult;
+            
+            ball.vx *= friction;
+            ball.vy *= friction;
+            
+            let nextX = ball.x + ball.vx;
+            let nextY = ball.y + ball.vy;
+
+            // 2. Äußere Begrenzung (Runder Rand der Uhr)
+            let dxC = nextX - CENTER;
+            let dyC = nextY - CENTER;
+            let distC = Math.sqrt(dxC * dxC + dyC * dyC);
+            
+            if (distC + ball.radius > GAME_RADIUS) {
+                // Ball auf den Rand setzen und abprallen lassen
+                let angleToCenter = Math.atan2(dyC, dxC);
+                nextX = CENTER + Math.cos(angleToCenter) * (GAME_RADIUS - ball.radius);
+                nextY = CENTER + Math.sin(angleToCenter) * (GAME_RADIUS - ball.radius);
+                ball.vx *= -0.5;
+                ball.vy *= -0.5;
+            }
+
+            // 3. Wand-Kollisionen (Die kreisförmigen Hindernisse)
+            let currentDxC = nextX - CENTER;
+            let currentDyC = nextY - CENTER;
+            let currentDist = Math.sqrt(currentDxC * currentDxC + currentDyC * currentDyC);
+            let currentAngle = Math.atan2(currentDyC, currentDxC);
+            if (currentAngle < 0) currentAngle += Math.PI * 2; // Normalize 0 to 2PI
+
+            walls.forEach(wall => {
+                // Ist der Ball in der Nähe des Wandradius?
+                let distToWall = Math.abs(currentDist - wall.radius);
+                if (distToWall < (ball.radius + wall.thickness / 2)) {
+                    
+                    // Prüfen, ob der Ball NICHT in der Lücke ist
+                    let inGap = false;
+                    // Berücksichtige Lücken, die über den 0/2PI Punkt gehen
+                    if (wall.gapStart < wall.gapEnd) {
+                        if (currentAngle > wall.gapStart && currentAngle < wall.gapEnd) inGap = true;
+                    } else {
+                        if (currentAngle > wall.gapStart || currentAngle < wall.gapEnd) inGap = true;
+                    }
+
+                    if (!inGap) {
+                        // Kollision! Ball zurückschieben
+                        let pushDir = (currentDist < wall.radius) ? -1 : 1;
+                        let targetRadius = wall.radius + pushDir * (wall.thickness / 2 + ball.radius);
+                        
+                        nextX = CENTER + Math.cos(currentAngle) * targetRadius;
+                        nextY = CENTER + Math.sin(currentAngle) * targetRadius;
+                        
+                        // Einfacher Bounce (Dämpfung der radialen Geschwindigkeit)
+                        ball.vx *= -0.3;
+                        ball.vy *= -0.3;
+                    }
+                }
+            });
+
+            ball.x = nextX;
+            ball.y = nextY;
+
+            // 4. Löcher-Kollision (Game Over)
+            holes.forEach(hole => {
+                let dx = ball.x - hole.x;
+                let dy = ball.y - hole.y;
+                if (Math.sqrt(dx * dx + dy * dy) < hole.radius) {
+                    endGame(false);
+                }
+            });
+
+            // 5. Ziel-Kollision (Gewonnen)
+            let dxG = ball.x - goal.x;
+            let dyG = ball.y - goal.y;
+            if (Math.sqrt(dxG * dxG + dyG * dyG) < goal.radius) {
+                endGame(true);
+            }
+        }
+
+        function draw() {
+            // Hintergrund (Modernes dunkles Design)
+            let bgGrad = ctx.createRadialGradient(CENTER, CENTER, 0, CENTER, CENTER, SIZE/2);
+            bgGrad.addColorStop(0, '#1a1a2e');
+            bgGrad.addColorStop(1, '#0f0f13');
+            ctx.fillStyle = bgGrad;
+            ctx.beginPath();
+            ctx.arc(CENTER, CENTER, SIZE/2, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Dezente Tech-Ringe (statt Holzmaserung)
+            ctx.lineWidth = 1;
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
+            for(let i = 20; i < GAME_RADIUS; i+=20) { // Größerer Abstand für cleaneren Look
+                ctx.beginPath();
+                ctx.arc(CENTER, CENTER, i, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+
+            // Ziel im Zentrum zeichnen (Modernes Leuchten)
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = '#00e676';
+            ctx.fillStyle = '#00e676'; 
+            ctx.beginPath();
+            ctx.arc(goal.x, goal.y, goal.radius - 3, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.shadowBlur = 0; // Schatten reset
+            ctx.strokeStyle = 'rgba(0, 230, 118, 0.4)';
+            ctx.lineWidth = 6;
+            ctx.stroke();
+
+            // Löcher zeichnen (Schwarzes Loch mit rotem Rand)
+            holes.forEach(hole => {
+                ctx.fillStyle = '#050505'; // Tiefschwarz
+                ctx.beginPath();
+                ctx.arc(hole.x, hole.y, hole.radius, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Dezentes rotes Leuchten
+                ctx.shadowBlur = 6;
+                ctx.shadowColor = '#ff1744';
+                ctx.strokeStyle = '#ff1744';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+                ctx.shadowBlur = 0; // reset
+            });
+
+            // Wände zeichnen (Neon-Look)
+            ctx.lineCap = 'round';
+            walls.forEach(wall => {
+                // Äußerer Glow
+                ctx.shadowBlur = 8;
+                ctx.shadowColor = '#2979ff'; // Klares Blau
+                ctx.strokeStyle = '#2979ff'; 
+                ctx.lineWidth = wall.thickness;
+                
+                ctx.beginPath();
+                ctx.arc(CENTER, CENTER, wall.radius, wall.gapEnd, wall.gapStart);
+                ctx.stroke();
+                ctx.shadowBlur = 0; // reset
+
+                // Innerer weißer Kern für Neon-Effekt
+                ctx.strokeStyle = '#e3f2fd';
+                ctx.lineWidth = wall.thickness * 0.4;
+                ctx.beginPath();
+                ctx.arc(CENTER, CENTER, wall.radius, wall.gapEnd, wall.gapStart);
+                ctx.stroke();
+            });
+
+            // Ball zeichnen (Helle Energie-Kugel)
+            ctx.shadowBlur = 5;
+            ctx.shadowColor = '#ffffff';
+            let grad = ctx.createRadialGradient(ball.x - 2, ball.y - 2, 1, ball.x, ball.y, ball.radius);
+            grad.addColorStop(0, '#ffffff');
+            grad.addColorStop(0.6, '#e0e0e0');
+            grad.addColorStop(1, '#9e9e9e');
+            
+            ctx.fillStyle = grad;
+            ctx.beginPath();
+            ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowBlur = 0; // reset
+        }
+
+        function gameLoop() {
+            if (gameState === 'PLAYING') {
+                update();
+            }
+            draw();
+            if (gameState === 'PLAYING') {
+                animationId = requestAnimationFrame(gameLoop);
+            }
+        }
+
+        // Initiales Zeichnen (vor dem Start)
+        draw();
+
+    </script>
+</body>
+</html>
