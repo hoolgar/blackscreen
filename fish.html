@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Kronen-Angeln</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-user-select: none;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      background: #000;
+      color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      overflow: hidden;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      width: 100vw;
+    }
+    /* Rundes Watch-Container Layout */
+    #watch-screen {
+      width: 100vw;
+      height: 100vw;
+      max-width: 384px;
+      max-height: 384px;
+      border-radius: 50%;
+      /* Hintergrund-Grafik: Wasser */
+      background: radial-gradient(circle, #0077be 0%, #001f3f 100%);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+      padding: 15px;
+      transition: background 0.5s ease;
+    }
+    
+    /* Fisch-Animation im Hintergrund */
+    .water-bubble {
+      position: absolute;
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 50%;
+      bottom: -10px;
+      animation: bubbleUp 5s infinite ease-in;
+    }
+    @keyframes bubbleUp {
+      0% { transform: translateY(0); opacity: 1; }
+      100% { transform: translateY(-300px); opacity: 0; }
+    }
+
+    #score-display {
+      position: absolute;
+      top: 15px;
+      font-size: 0.9rem;
+      color: #ffd700;
+      font-weight: bold;
+      z-index: 5;
+    }
+
+    /* Grafisches Haken-Element */
+    #hook-icon {
+      font-size: 3rem;
+      color: #fff;
+      transition: all 0.3s ease;
+      z-index: 5;
+    }
+    #hook-icon.hooked {
+      color: #ffcc00;
+      animation: hookShake 0.3s infinite;
+    }
+    @keyframes hookShake {
+      0% { transform: rotate(0deg); }
+      25% { transform: rotate(-5deg); }
+      75% { transform: rotate(5deg); }
+      100% { transform: rotate(0deg); }
+    }
+
+    /* Text-Anzeige */
+    #status {
+      font-size: 0.95rem;
+      font-weight: bold;
+      z-index: 5;
+      margin-top: 10px;
+    }
+    #subtext {
+      font-size: 0.75rem;
+      color: #ccc;
+      z-index: 5;
+      max-width: 80%;
+    }
+
+    /* --- REELING GRAPHICS --- */
+    #tension-gauge-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 10;
+      display: none;
+      background: rgba(0, 31, 63, 0.9);
+      border-radius: 50%;
+    }
+
+    /* Visueller Spannungsbogen */
+    #tension-arc {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 80%;
+      height: 20px;
+      border-radius: 10px;
+      background: linear-gradient(to right, #00ccff 0%, #00ff22 40%, #00ff22 60%, #ff3300 100%);
+      border: 2px solid #fff;
+    }
+
+    /* Spannungs-Nadel */
+    #tension-needle {
+      position: absolute;
+      bottom: 0px;
+      left: 50%;
+      width: 4px;
+      height: 40px;
+      background-color: #fff;
+      border-radius: 2px;
+      transform-origin: bottom center;
+      transition: transform 0.1s linear;
+    }
+
+    /* Fang-Fortschritt */
+    #reel-icon {
+      position: absolute;
+      top: 20%;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 2rem;
+      z-index: 11;
+    }
+    #reel-icon #fish {
+      transition: all 0.1s linear;
+    }
+
+  </style>
+</head>
+<body>
+
+<div id="watch-screen">
+  <div id="score-display">🏆 <span id="score">0</span></div>
+  
+  <!-- Fischhaken Icon -->
+  <div id="hook-icon">🪝</div>
+  
+  <div id="status" class="status-text">Tippen zum Angeln</div>
+  <div id="subtext" class="sub-text"></div>
+  
+  <!-- Grafische Spannungsanzeige (nur beim Reeling) -->
+  <div id="tension-gauge-container">
+    <div id="reel-icon">
+        <span style="opacity: 0.5;">⛵</span>
+        <div id="fish" style="display:inline-block; font-size: 1.5rem; position:absolute; bottom: -20px;">🐟</div>
+    </div>
+    <div id="tension-arc">
+      <div id="tension-needle"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Spielzustände: 'IDLE', 'WAITING', 'HOOK', 'REELING'
+  let state = 'IDLE';
+  let tension = 50; // 0 bis 100 (Optimal: 40-60)
+  let catchProgress = 0; // 0 bis 100
+  let score = 0;
+  
+  let waitTimeout = null;
+  let hookTimeout = null;
+  let loopInterval = null;
+
+  const screen = document.getElementById('watch-screen');
+  const hookIconEl = document.getElementById('hook-icon');
+  const statusEl = document.getElementById('status');
+  const subtextEl = document.getElementById('subtext');
+  const tensionGauge = document.getElementById('tension-gauge-container');
+  const tensionNeedleEl = document.getElementById('tension-needle');
+  const scoreEl = document.getElementById('score');
+  const fishEl = document.getElementById('fish');
+
+  // Haptisches Feedback
+  function vibrate(pattern) {
+    if (navigator.vibrate) {
+      navigator.vibrate(pattern);
+    }
+  }
+
+  // Interaktion per Touch
+  screen.addEventListener('click', () => {
+    if (state === 'IDLE') {
+      startFishing();
+    } else if (state === 'HOOK') {
+      startReeling();
+    }
+  });
+
+  // Interaktion per Krone (Rotary Input)
+  window.addEventListener('wheel', (e) => {
+    if (state !== 'REELING') return;
+
+    // Erhöhe Spannung basierend auf Drehgeschwindigkeit
+    const delta = Math.abs(e.deltaY) * 0.12;
+    tension = Math.min(100, tension + delta);
+  });
+
+  // Wasser-Animation im Hintergrund hinzufügen
+  function createBubbles() {
+    for (let i = 0; i < 5; i++) {
+        const bubble = document.createElement('div');
+        bubble.className = 'water-bubble';
+        const size = Math.random() * 8 + 4 + "px";
+        bubble.style.width = size;
+        bubble.style.height = size;
+        bubble.style.left = Math.random() * 80 + 10 + "%";
+        bubble.style.animationDelay = Math.random() * 5 + "s";
+        screen.appendChild(bubble);
+    }
+  }
+  createBubbles();
+
+  function startFishing() {
+    state = 'WAITING';
+    statusEl.innerText = "Warten...";
+    subtextEl.innerText = "";
+    hookIconEl.style.color = "#ccc";
+    hookIconEl.className = "";
+    tensionGauge.style.display = 'none';
+
+    // Zufällige Wartezeit zwischen 3 und 7 Sekunden
+    const delay = Math.floor(Math.random() * 4000) + 3000;
+    waitTimeout = setTimeout(triggerBite, delay);
+  }
+
+  function triggerBite() {
+    state = 'HOOK';
+    statusEl.innerText = "ANBISS!";
+    subtextEl.innerText = "Schnell TIPPEN!";
+    hookIconEl.className = "hooked";
+    vibrate([200, 100, 200]); 
+
+    // Zeitfenster zum Reagieren (1.3 Sekunden)
+    hookTimeout = setTimeout(() => {
+      if (state === 'HOOK') {
+        fishEscaped("Zu langsam!");
+      }
+    }, 1300);
+  }
+
+  function startReeling() {
+    clearTimeout(hookTimeout);
+    state = 'REELING';
+    tension = 50; // Start in der Mitte
+    catchProgress = 0;
+
+    hookIconEl.style.display = 'none';
+    statusEl.style.display = 'none';
+    subtextEl.style.display = 'none';
+    tensionGauge.style.display = 'block';
+
+    // Spielschleife starten
+    loopInterval = setInterval(gameLoop, 50);
+  }
+
+  function gameLoop() {
+    if (state !== 'REELING') return;
+
+    // Spannung sinkt stetig ab
+    tension -= 1.1;
+
+    // Fortschritt beim Einholen steigt, wenn Spannung im grünen Bereich (30 - 70)
+    if (tension >= 30 && tension <= 70) {
+      catchProgress += 1.3;
+    }
+
+    // Anzeige aktualisieren: Nadel drehen (-45deg bis 45deg)
+    const angle = (tension - 50) * 0.9;
+    tensionNeedleEl.style.transform = `rotate(${angle}deg)`;
+
+    // Farbe der Nadel
+    if (tension < 30) {
+      tensionNeedleEl.style.backgroundColor = '#00ccff'; // Zu locker
+    } else if (tension <= 70) {
+      tensionNeedleEl.style.backgroundColor = '#00ff22'; // Optimal
+    } else {
+      tensionNeedleEl.style.backgroundColor = '#ff3300'; // Zu fest
+    }
+
+    // Fisch-Animation (beweget sich von unten nach oben)
+    fishEl.style.bottom = `${-20 + (catchProgress * 0.5)}px`;
+
+
+    // Bedingungen prüfen
+    if (tension <= 0) {
+      fishEscaped("Schnur zu locker!");
+    } else if (tension >= 100) {
+      lineSnapped();
+    } else if (catchProgress >= 100) {
+      fishCaught();
+    }
+  }
+
+  function endReelingMode() {
+    resetLoop();
+    state = 'IDLE';
+    tensionGauge.style.display = 'none';
+    hookIconEl.style.display = 'block';
+    statusEl.style.display = 'block';
+    subtextEl.style.display = 'block';
+  }
+
+  function fishCaught() {
+    endReelingMode();
+    score++;
+    scoreEl.innerText = score;
+    statusEl.innerText = "🏆 GEFANGEN!";
+    subtextEl.innerText = "Tippen für nächsten Wurf";
+    hookIconEl.style.color = "#ffd700";
+    hookIconEl.className = "";
+    vibrate([100, 50, 100, 50, 200]);
+  }
+
+  function lineSnapped() {
+    endReelingMode();
+    statusEl.innerText = "GERISSEN!";
+    subtextEl.innerText = "Zu fest gekurbelt";
+    hookIconEl.style.color = "#ff3300";
+    hookIconEl.className = "";
+    vibrate(400); 
+  }
+
+  function fishEscaped(reason) {
+    endReelingMode();
+    statusEl.innerText = "Entwischt!";
+    subtextEl.innerText = reason;
+    hookIconEl.style.color = "#fff";
+    hookIconEl.className = "";
+    vibrate([50, 100, 50]);
+  }
+
+  function resetLoop() {
+    clearInterval(loopInterval);
+    clearTimeout(waitTimeout);
+    clearTimeout(hookTimeout);
+  }
+</script>
+
+</body>
+</html>
